@@ -23,10 +23,11 @@
     .balance{display:flex;justify-content:space-between;align-items:baseline;background:#0c1522;border:1px solid rgba(255,255,255,.06);padding:10px;border-radius:10px}
     .big{font-size:20px;font-weight:800}
 
-    .stage{background:#0f1826;border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:10px;position:relative;overflow:hidden}
-    #world{width:100%;height:100%;background:#0f1826;border-radius:8px}
-    #slotTiles{position:absolute;left:10px;right:10px;bottom:10px;height:40px;display:flex;gap:6px;align-items:flex-end;pointer-events:none}
-    .tile{height:28px;border-radius:6px;border:1px solid rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;color:#0b1420}
+    .stage{position:relative;background:#0f1826;border:1px solid rgba(255,255,255,.06);border-radius:12px;overflow:hidden}
+    #world{position:absolute;inset:0;width:100%;height:100%;background:#0f1826}
+    #overlay{position:absolute;inset:0;pointer-events:none}
+    #slotTiles{position:absolute;left:0;right:0;height:36px;display:block}
+    .tile{position:absolute;height:28px;border-radius:6px;border:1px solid rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;color:#0b1420}
 
     .payouts{display:flex;gap:6px;flex-wrap:wrap}
     .chip{background:#111827;border:1px solid rgba(255,255,255,.08);padding:6px 8px;border-radius:8px;font-weight:700}
@@ -65,7 +66,9 @@
 
     <main class="stage">
       <canvas id="world"></canvas>
-      <div id="slotTiles"></div>
+      <div id="overlay">
+        <div id="slotTiles"></div>
+      </div>
     </main>
   </div>
 
@@ -105,13 +108,23 @@
 
     function updateBalance(){balanceEl.textContent=fmt(balance)}
 
+    // geometry helpers kept in a single place so everything stays aligned
+    function geom(){
+      const c=el('world'); const width=c.width; const height=c.height; const rows=Number(rowsSel.value);
+      const slots=rows+1; const spacingX=Math.min(44,(width-120)/slots); const spacingY=Math.min(32,(height-200)/(rows+3));
+      const offsetX=(width - spacingX*(slots-1))/2; const offsetY=60; const baseY=offsetY + rows*spacingY + 20;
+      return {width,height,rows,slots,spacingX,spacingY,offsetX,offsetY,baseY};
+    }
+
     function drawTiles(payouts){
-      const rows=Number(rowsSel.value); const slots=rows+1; const tiles=el('slotTiles'); tiles.innerHTML='';
-      const canvas=el('world'); const width=canvas.width; const spacingX=Math.min(44,(width-120)/slots);
-      const offsetX=(width - spacingX*(slots-1))/2;
-      for(let i=0;i<slots;i++){
-        const tile=document.createElement('div'); tile.className='tile'; tile.style.flex=`0 0 ${spacingX-4}px`;
-        tile.style.background=colorForSlot(i,slots); tile.textContent=(Math.round(payouts[i]*10)/10).toFixed(1).replace(/\.0$/,'')+'x';
+      const g=geom(); const tiles=el('slotTiles'); tiles.innerHTML='';
+      tiles.style.top = (g.baseY + 42) + 'px'; // a bit under the last pegs
+      for(let i=0;i<g.slots;i++){
+        const x = g.offsetX + i*g.spacingX - g.spacingX/2 + 2;
+        const w = g.spacingX - 4;
+        const tile = document.createElement('div'); tile.className='tile';
+        tile.style.left = x + 'px'; tile.style.width = w + 'px'; tile.style.background = colorForSlot(i,g.slots);
+        tile.textContent=(Math.round(payouts[i]*10)/10).toFixed(1).replace(/\.0$/,'')+'x';
         tiles.appendChild(tile);
       }
     }
@@ -125,39 +138,36 @@
     // ----- Physics world -----
     const { Engine, Render, Runner, World, Bodies, Body } = Matter;
 
-    function fitCanvas(){const c=el('world'); const p=c.parentElement; c.width=p.clientWidth-20; c.height=Math.max(520,p.clientHeight-20); if(render){render.canvas=c; render.options.width=c.width; render.options.height=c.height;}}
+    function fitCanvas(){const c=el('world'); const parent=c.parentElement; c.width=parent.clientWidth; c.height=Math.max(520,parent.clientHeight); if(render){render.canvas=c; render.options.width=c.width; render.options.height=c.height;}}
 
     function makePeg(x,y){return Bodies.circle(x,y,4.5,{isStatic:true, render:{fillStyle:'#ffffff'}})}
 
     function rebuildBoard(){
       if(engine){World.clear(engine.world,true); Engine.clear(engine);} engine=Engine.create(); world=engine.world;
-      const c=el('world'); const width=c.width; const height=c.height; const rows=Number(rowsSel.value);
-      const cols=rows+1; const spacingX=Math.min(44,(width-120)/cols); const spacingY=Math.min(32,(height-200)/(rows+3));
-      const offsetX=(width - spacingX*(cols-1))/2; const offsetY=60;
-      const pegs=[]; for(let r=0;r<rows;r++){ for(let cc=0;cc<=r;cc++){ const x=offsetX + (cols-r-1)*spacingX/2 + cc*spacingX; const y=offsetY + r*spacingY; pegs.push(makePeg(x,y)); }}
+      const g=geom();
+      const pegs=[]; for(let r=0;r<g.rows;r++){ for(let cc=0;cc<=r;cc++){ const x=g.offsetX + (g.slots - r - 1)*g.spacingX/2 + cc*g.spacingX; const y=g.offsetY + r*g.spacingY; pegs.push(makePeg(x,y)); }}
       World.add(world, pegs);
-      const ground=Bodies.rectangle(width/2,height-10,width,40,{isStatic:true,render:{fillStyle:'#0f1826'}}); World.add(world,[ground]);
-      if(render) Render.stop(render); render=Render.create({canvas:el('world'), engine, options:{width:el('world').width,height:el('world').height, wireframes:false, background:'transparent', pixelRatio:window.devicePixelRatio||1}}); Render.run(render);
+      const ground=Bodies.rectangle(g.width/2,g.height-10,g.width,40,{isStatic:true,render:{fillStyle:'#0f1826'}}); World.add(world,[ground]);
+      if(render) Render.stop(render); render=Render.create({canvas:el('world'), engine, options:{width:g.width,height:g.height, wireframes:false, background:'transparent', pixelRatio:window.devicePixelRatio||1}}); Render.run(render);
       Runner.run(Engine.create(), engine);
-      drawTiles(buildPayouts(rows, riskEl.value));
+      drawTiles(buildPayouts(g.rows, riskEl.value));
     }
 
     function currentRng(){return mulberry32(strHash(seedEl.value)>>>0)}
 
     function dropBalls(n){
-      const c=el('world'); const width=c.width; const rows=Number(rowsSel.value); const slots=rows+1; const spacingX=Math.min(44,(width-120)/slots); const offsetX=(width - spacingX*(slots-1))/2; const rng=currentRng();
-      const payouts=buildPayouts(rows, riskEl.value); const bet=Math.max(0,Number(betEl.value)||0); if(bet<=0) return;
+      const g=geom(); const rng=currentRng(); const payouts=buildPayouts(g.rows, riskEl.value); const bet=Math.max(0,Number(betEl.value)||0); if(bet<=0) return;
       for(let i=0;i<n;i++){
-        const x=offsetX + (slots-1)/2*spacingX + (rng()-0.5)*spacingX*0.4;
+        const x=g.offsetX + (g.slots-1)/2*g.spacingX + (rng()-0.5)*g.spacingX*0.4;
         const ball=Bodies.circle(x,40,6.5,{restitution:0.35,friction:0.02,frictionAir:0.001, render:{fillStyle:'#ffffff',strokeStyle:'#0a0f14',lineWidth:1}});
-        ball._bet=bet; ball._payouts=payouts; ball._settled=false; ball._rows=rows; World.add(world,ball); Body.setVelocity(ball,{x:(rng()-0.5)*2.2,y:0}); balls.push(ball);
+        ball._bet=bet; ball._payouts=payouts; ball._settled=false; World.add(world,ball); Body.setVelocity(ball,{x:(rng()-0.5)*2.2,y:0}); balls.push(ball);
       }
     }
 
     function settleCheck(){
-      const c=el('world'); const width=c.width; const rows=Number(rowsSel.value); const slots=rows+1; const spacingX=Math.min(44,(width-120)/slots); const offsetX=(width - spacingX*(slots-1))/2; const baseY=60 + rows*Math.min(32,(c.height-200)/(rows+3)) + 20;
-      balls.forEach(b=>{ if(b._settled) return; if(b.position.y>baseY+60 && Math.abs(b.velocity.y)<0.3){ let slot=Math.round((b.position.x - offsetX)/spacingX); slot=Math.max(0,Math.min(slots-1,slot)); const mul=b._payouts[slot]; const profit=b._bet*(mul-1); balance+=profit; updateBalance(); b._settled=true; }});
-      balls=balls.filter(b=>b.position.y<c.height+100); requestAnimationFrame(settleCheck);
+      const g=geom();
+      balls.forEach(b=>{ if(b._settled) return; if(b.position.y>g.baseY+60 && Math.abs(b.velocity.y)<0.3){ let slot=Math.round((b.position.x - g.offsetX)/g.spacingX); slot=Math.max(0,Math.min(g.slots-1,slot)); const mul=b._payouts[slot]; const profit=b._bet*(mul-1); balance+=profit; updateBalance(); b._settled=true; }});
+      balls=balls.filter(b=>b.position.y<geom().height+100); requestAnimationFrame(settleCheck);
     }
 
     // ----- Wire up -----
@@ -167,7 +177,7 @@
     setInterval(()=>{if(auto) dropBtn.click();},650);
     resetBtn.addEventListener('click',()=>{balance=10000; updateBalance(); rebuildBoard();});
     maxBtn.addEventListener('click',()=>{betEl.value=Math.max(1,balance/10).toFixed(2)});
-    [rowsSel,riskEl].forEach(c=>c.addEventListener('input',()=>renderPayouts() && rebuildBoard()));
+    [rowsSel,riskEl].forEach(c=>c.addEventListener('input',()=>{renderPayouts(); rebuildBoard();}));
 
     (function init(){fitCanvas(); updateBalance(); renderPayouts(); rebuildBoard(); settleCheck();})();
   </script>
